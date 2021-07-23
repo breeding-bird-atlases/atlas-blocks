@@ -1,0 +1,34 @@
+library(here)
+library(sf)
+library(dplyr)
+library(ggplot2)
+
+# import data -----------------------------------------------------------------
+# a DNR-produced shapefile of atlas blocks
+blockgrid <- st_read(dsn = here("data", "mapping", "blockgrid", "blockgrid"),
+                     layer = "MDDCBBA3_block_grid_trimmed")
+# a gpkg of the Maryland and DC outline                     
+state <- st_read(dsn = here("data", "mapping", "region_map", 
+                            "bba3_region_outline.gpkg"))
+                            
+# identify partial blocks -----------------------------------------------------
+
+# find the area of each block
+area <- round(st_area(blockgrid))
+
+# get the mode, since most blocks are similar area
+getmode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# anything below the mode is a partial block
+blockgrid <- blockgrid %>%
+  bind_cols(., data.frame(area_m2 = as.numeric(area))) %>%
+  mutate(is_partial = ifelse(area_m2 < getmode(area), TRUE, FALSE))
+
+# plot to confirm it worked
+ggplot(blockgrid) + 
+  geom_sf(aes(fill = is_partial)) + 
+  geom_sf(data = state, fill = "transparent") 
+  
