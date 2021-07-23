@@ -1,0 +1,83 @@
+library(here)
+library(sf)
+library(dplyr)
+
+# import blocks ---------------------------------------------------------------
+# blockgrid is a DNR-produced shapefile of atlas blocks
+blockgrid <- st_read(dsn = here("data", "mapping", "blockgrid", "blockgrid"),
+                     layer = "MDDCBBA3_block_grid_trimmed")
+
+# find block centroids --------------------------------------------------------
+
+# check that all centroids are within polygons and if they're not, replace 
+# them to match ebird centroids.
+
+st_centroid_within_poly <- function(poly) {
+  # check if centroid is in polygon
+  centroid <- poly %>% st_centroid(of_largest_polygon = TRUE)
+  in_poly <- st_within(centroid, poly, sparse = FALSE)
+  
+  # return the diagonal of the matrix
+  mat <- 1:nrow(in_poly) + (nrow(in_poly)*0:(ncol(in_poly) - 1))
+  in_poly_v <- data.frame(is_within_block = in_poly[mat])
+  
+  # join the matrix diagonal results to the centroid object
+  centroid_r <- bind_cols(centroid, in_poly_v)
+  
+  # print messages to know whether to manually replace any centroids
+  if (all(unlist(centroid_r$is_within_block))) {
+    print("All centroids within blocks") 
+  } else {
+    print(paste(paste(centroid_r$Block_Name[centroid_r$is_within_block != TRUE],
+                collapse = ", "), "not within block"))
+  }
+  
+  return(centroid_r)
+}
+
+block_centroid <- st_centroid_within_poly(blockgrid)
+
+# replace the centroid_x and centroid_y columns with the XY geometry data
+block_centroid <- block_centroid %>%
+  mutate(centroid_x = st_coordinates(block_centroid)[, "X"],
+         centroid_y = st_coordinates(block_centroid)[, "Y"]) %>%
+  select(!c(CENTROID_X, CENTROID_Y)) %>%
+  rename_with(str_to_lower)
+
+# manually replace the centroids that are outside of the blocks with eBird 
+# centroids.
+# have to manually replace centroids, because st_point_on_surface randomly
+# returns a point on the polygon surface as far as I can tell.
+# to find ebird points, submit a checklist at the block level, check the 
+# location on the map and retrieve coordinates, then delete checklist.
+## ebird centroid for Paw Paw NE: 39.5929867 -78.4219521
+## ebird centroid for Williamsport SW: 39.530973 -77.8513259
+## ebird centroid for Great Fox Island CW: 37.9528482 -75.9476486
+ebird_centroids <- data.frame(block_name = c("Great Fox Island CW",
+                                             "Williamsport SW",
+                                             "Paw Paw NE"),
+                              centroid_x = c(-75.9476486,
+                                             -77.8513259,
+                                             -78.4219521),
+                              centroid_y = c(37.9528482,
+                                             39.530973,
+                                             39.5929867))
+
+# convert dataframe to sf object
+ebird_centroids_sf <- st_as_sf(ebird_centroids, 
+                               coords = c("centroid_x", "centroid_y"))
+# match crs with blockgrid object
+ebird_centroids_sf <- st_set_crs(ebird_centroids_sf, st_crs(block_centroid))
+
+# join ebird sf object with ebird centroid df to regain centroid columns
+ebird_centroids_sf <- left_join(ebird_centroids_sf, ebird_centroids)
+
+# create the index of blocks that weren't within the polygon
+indx <- which(block_centroid$block_name %in% ebird_centroids$block_name)
+cols <- c("block_name", "centroid_x", "centroid_y", "geometry")
+
+block_centroid[indx, cols] <- ebird_centroids_sf
+
+# output the centroid file
+write.csv(block_centroid, here("data", "bba3", "block_centroids.csv"), 
+          row.names = FALSE)
