@@ -1,0 +1,37 @@
+# 20211203
+# get a missing county for any set of observations with lat/lon
+# can download US county shapefiles here: 
+# https://www.census.gov/cgi-bin/geo/shapefiles/index.php
+# select "Counties (and equivalent)"
+
+library(sf)
+
+## df = dataframe of coordinates; must be at least two columns of x and y
+## map_sf = a simple feature object applicable to the area covered by df
+## map_dsn = (if no map_sf) data source of shapefile applicable to the area 
+## covered by df
+## map_layer = (if no map_sf) shapefile layer
+## map_col = column in sf object/shapefile that contains county name
+## crs = spatial projection; default is wgs84
+## lon = name of the column in df containing x (longitude)
+## lat = name of the column in df containing y (latitude)
+find_county <- function(df, map_dsn, map_layer, map_sf = NULL, 
+                        map_col = "NAME", crs = 4326,
+                        lon = "longitude", lat = "latitude") {
+  if(any(class(map_sf) %in% c("sf", "sfc", "sfg"))) {
+    census_county <- sf::st_transform(map_sf, crs = crs)
+  } else {
+    census_county <- sf::st_read(map_dsn, map_layer) %>%
+      sf::st_transform(crs = crs)
+  }
+  points <- sf::st_as_sf(df, coords = c(lon, lat), crs = crs) 
+  
+  counties_points_in <- sf::st_intersects(points, census_county)
+  
+  county <- NA
+  
+  for(i in seq_along(df[, 1])) {
+    county[i] <- data.frame(census_county)[counties_points_in[[i]], map_col]
+  }
+  return(county)
+} 
